@@ -1,33 +1,46 @@
 # Municípios API
 
-API REST em .NET 10 para consulta de municípios brasileiros por UF, com suporte a múltiplos providers de dados configuráveis via variável de ambiente.
+API REST em .NET 10 para consulta de municípios brasileiros por UF.
+
+Construída com Clean Architecture, cache distribuído via Redis e suporte a múltiplos providers de dados configuráveis por variável de ambiente.
+
+---
 
 ## Tecnologias
 
-- .NET 10 / ASP.NET Core
-- Clean Architecture (Domain → Application → Infrastructure → Api)
-- IMemoryCache (cache de 24h por UF)
-- xUnit + Moq + FluentAssertions
-- Swagger / OpenAPI
-- Docker
+| Camada | Tecnologia |
+|---|---|
+| Framework | .NET 10 / ASP.NET Core |
+| Arquitetura | Clean Architecture (Domain → Application → Infrastructure → Api) |
+| Cache | Redis (StackExchange.Redis) com fallback in-memory |
+| Testes | xUnit + Moq + FluentAssertions |
+| Documentação | Swagger / OpenAPI |
+| CI | GitHub Actions |
+| Container | Docker + Docker Compose |
+
+---
 
 ## Como executar
 
-### Local
+### Local (sem Docker)
 
 ```bash
 dotnet run --project src/MunicipiosApi.Api
 ```
 
-Acesse o Swagger em: `http://localhost:5000/swagger`
+O Swagger abre automaticamente em `http://localhost:5043/swagger`.
 
-### Docker
+> Sem Redis configurado, a API usa cache in-memory automaticamente como fallback.
+
+### Docker (API + Redis)
 
 ```bash
 docker-compose up -d
 ```
 
 Acesse: `http://localhost:8080/swagger`
+
+---
 
 ## Configuração do Provider
 
@@ -38,7 +51,7 @@ O provider de dados é definido via variável de ambiente `MUNICIPALITY_PROVIDER
 | `BrasilApi` (padrão) | https://brasilapi.com.br |
 | `Ibge` | https://servicodados.ibge.gov.br |
 
-### Exemplos de configuração
+Trocar o provider **não requer alteração de código** — apenas a variável de ambiente.
 
 ```bash
 # Local
@@ -48,22 +61,40 @@ MUNICIPALITY_PROVIDER=Ibge dotnet run --project src/MunicipiosApi.Api
 MUNICIPALITY_PROVIDER=Ibge docker-compose up -d
 ```
 
-## Endpoints
+---
+
+## Configuração do Redis
+
+A conexão com Redis é definida via `ConnectionStrings:Redis`.
+
+```bash
+# Docker Compose (já configurado)
+ConnectionStrings__Redis=redis:6379
+
+# Produção
+ConnectionStrings__Redis=seu-redis-host:6379
+```
+
+> Quando a variável estiver vazia, a API usa cache in-memory como fallback sem nenhuma alteração de código.
+
+---
+
+## Endpoint
 
 ### `GET /api/municipalities/{uf}`
 
-Lista os municípios de um estado com paginação e busca.
+Lista os municípios de um estado com paginação e busca por nome.
 
 **Parâmetros:**
 
 | Parâmetro | Tipo | Obrigatório | Descrição |
 |---|---|---|---|
 | `uf` | string (path) | Sim | Sigla do estado (ex: RS, SP, MG) |
-| `page` | int (query) | Não | Número da página (default: 1) |
-| `pageSize` | int (query) | Não | Itens por página, máx 500 (default: 50) |
-| `search` | string (query) | Não | Filtro por nome do município |
+| `page` | int (query) | Não | Número da página — default: `1` |
+| `pageSize` | int (query) | Não | Itens por página, máx 500 — default: `50` |
+| `search` | string (query) | Não | Filtro parcial por nome do município |
 
-**Resposta 200:**
+**200 OK:**
 
 ```json
 {
@@ -80,13 +111,17 @@ Lista os municípios de um estado com paginação e busca.
 }
 ```
 
-**Resposta 400:**
+**400 Bad Request:**
 
 ```json
 {
-  "errors": ["UF 'XX' inválida. Use a sigla de um dos 27 estados brasileiros."]
+  "errors": [
+    { "description": "UF 'XX' inválida. Use a sigla de um dos 27 estados brasileiros." }
+  ]
 }
 ```
+
+---
 
 ## Testes
 
@@ -94,30 +129,33 @@ Lista os municípios de um estado com paginação e busca.
 # Todos os testes
 dotnet test
 
-# Unitários
+# Unitários (12 casos)
 dotnet test tests/MunicipiosApi.UnitTests
 
-# Integração
+# Integração (6 casos)
 dotnet test tests/MunicipiosApi.IntegrationTests
 ```
+
+---
 
 ## Arquitetura
 
 ```
 src/
-├── MunicipiosApi.Domain          → Entidades, interfaces, Result<T>
-├── MunicipiosApi.Application     → Services, DTOs, contratos
-├── MunicipiosApi.Infrastructure  → Providers (BrasilAPI/IBGE), DI, cache
-└── MunicipiosApi.Api             → Controllers, Middleware, configuração
+├── MunicipiosApi.Domain          → Municipality, Result<T>, IMunicipalityProvider
+├── MunicipiosApi.Application     → MunicipalityService, DTOs, paginação, cache, validação de UF
+├── MunicipiosApi.Infrastructure  → BrasilApiProvider, IbgeProvider, DI, Redis
+└── MunicipiosApi.Api             → MunicipalityController, ExceptionMiddleware,
+                                    ResultExtensions, ErrorsViewModel, Swagger
 
 tests/
-├── MunicipiosApi.UnitTests       → Testes unitários do MunicipalityService (12 casos)
-└── MunicipiosApi.IntegrationTests → Testes de integração via WebApplicationFactory (6 casos)
+├── MunicipiosApi.UnitTests       → MunicipalityService (12 testes com MemoryDistributedCache)
+└── MunicipiosApi.IntegrationTests → Controller E2E via WebApplicationFactory (6 testes)
 ```
 
-### Strategy Pattern para providers
+### Strategy Pattern — providers
 
-O provider ativo é selecionado em tempo de startup via `DependencyInjection.cs`:
+O provider ativo é escolhido em tempo de startup via `DependencyInjection.cs`:
 
 ```csharp
 if (provider == "Ibge")
@@ -126,8 +164,25 @@ else
     services.AddScoped<IMunicipalityProvider, BrasilApiMunicipalityProvider>();
 ```
 
-Adicionar um novo provider requer apenas implementar `IMunicipalityProvider` e registrá-lo.
+Adicionar um novo provider requer apenas implementar `IMunicipalityProvider` e registrá-lo — sem alterar nenhuma outra classe.
 
-### Cache
+### Result\<T\> + ToActionResult
 
-Municípios são cacheados em memória por 24 horas por UF. A busca (`search`) e a paginação são aplicadas sobre os dados cacheados, evitando chamadas repetidas às APIs externas.
+Todo método de serviço retorna `Result<T>`. O controller nunca decide o status HTTP diretamente:
+
+```csharp
+// Controller
+var result = await service.GetByStateAsync(uf, page, pageSize, search, ct);
+return result.ToActionResult(); // → 200 OK ou 400 Bad Request automaticamente
+```
+
+### Cache distribuído
+
+Municípios são cacheados no Redis por 24 horas por UF. Busca e paginação são aplicadas sobre os dados em cache, evitando chamadas repetidas às APIs externas.
+
+```
+1ª requisição → Redis (miss) → BrasilAPI/IBGE → salva no Redis → resposta
+2ª requisição → Redis (hit)  → resposta  (API externa não é chamada)
+```
+
+Se o Redis estiver indisponível, a API continua funcionando e loga um warning.
