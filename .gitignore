@@ -1,0 +1,15 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.swp
+
+## Logs
+*.log
+
+## Environment
+.env
+.env.*
+!.env.example

@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/MunicipiosApi.Api/MunicipiosApi.Api.csproj" />
+    <Project Path="src/MunicipiosApi.Application/MunicipiosApi.Application.csproj" />
+    <Project Path="src/MunicipiosApi.Domain/MunicipiosApi.Domain.csproj" />
+    <Project Path="src/MunicipiosApi.Infrastructure/MunicipiosApi.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/MunicipiosApi.IntegrationTests/MunicipiosApi.IntegrationTests.csproj" />
+    <Project Path="tests/MunicipiosApi.UnitTests/MunicipiosApi.UnitTests.csproj" />
+  </Folder>
+</Solution>
