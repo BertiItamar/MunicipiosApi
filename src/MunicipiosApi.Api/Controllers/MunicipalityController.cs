@@ -1,4 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
+using MunicipiosApi.Api.Extensions;
+using MunicipiosApi.Api.ViewModels;
+using MunicipiosApi.Application.DTOs;
 using MunicipiosApi.Application.Interfaces;
 
 namespace MunicipiosApi.Api.Controllers;
@@ -17,21 +20,15 @@ public class MunicipalityController(IMunicipalityService service) : ControllerBa
     /// <param name="search">Filtro por nome do município (opcional)</param>
     /// <param name="ct">Cancellation token</param>
     [HttpGet("{uf}")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status502BadGateway)]
-    public async Task<IActionResult> GetByState(
-        string uf,
+    [ProducesResponseType<PagedResultDto<MunicipalityDto>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ErrorsViewModel>(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> GetByStateAsync(string uf,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50,
         [FromQuery] string? search = null,
         CancellationToken ct = default)
     {
         var result = await service.GetByStateAsync(uf, page, pageSize, search, ct);
-
-        if (result.IsFailure)
-            return BadRequest(new { errors = result.Errors });
-
-        return Ok(result.Value);
+        return result.ToActionResult();
     }
 }

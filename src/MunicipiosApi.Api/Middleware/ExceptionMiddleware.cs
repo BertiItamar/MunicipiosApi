@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using MunicipiosApi.Api.ViewModels;
 
 namespace MunicipiosApi.Api.Middleware;
 
@@ -13,7 +14,6 @@ public sealed class ExceptionMiddleware(RequestDelegate next, ILogger<ExceptionM
         }
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
         {
-            // Requisição cancelada pelo cliente — sem log de erro
             context.Response.StatusCode = 499;
         }
         catch (Exception ex)
@@ -25,18 +25,17 @@ public sealed class ExceptionMiddleware(RequestDelegate next, ILogger<ExceptionM
 
     private static async Task WriteErrorResponseAsync(HttpContext context, Exception ex)
     {
+        var env = context.RequestServices.GetRequiredService<IWebHostEnvironment>();
+
+        var message = env.IsDevelopment()
+            ? ex.Message
+            : "Ocorreu um erro interno. Por favor, tente novamente.";
+
+        var body = new ErrorsViewModel([new ErrorViewModel(message)]);
+
         context.Response.ContentType = "application/json";
         context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
 
-        var isDevelopment = context.RequestServices
-            .GetRequiredService<IWebHostEnvironment>()
-            .IsDevelopment();
-
-        var body = JsonSerializer.Serialize(new
-        {
-            errors = new[] { isDevelopment ? ex.Message : "Ocorreu um erro interno. Por favor, tente novamente." }
-        });
-
-        await context.Response.WriteAsync(body);
+        await context.Response.WriteAsync(JsonSerializer.Serialize(body));
     }
 }
