@@ -8,3 +8,17 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - MUNICIPALITY_PROVIDER=BrasilApi   # Altere para "Ibge" para usar a API do IBGE
+      - ConnectionStrings__Redis=redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5

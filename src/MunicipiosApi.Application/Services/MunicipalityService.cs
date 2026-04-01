@@ -1,4 +1,5 @@
-using Microsoft.Extensions.Caching.Memory;
+using System.Text.Json;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Logging;
 using MunicipiosApi.Application.DTOs;
 using MunicipiosApi.Application.Interfaces;
@@ -9,7 +10,7 @@ namespace MunicipiosApi.Application.Services;
 
 public sealed class MunicipalityService(
     IMunicipalityProvider provider,
-    IMemoryCache cache,
+    IDistributedCache cache,
     ILogger<MunicipalityService> logger) : IMunicipalityService
 {
     private static readonly HashSet<string> ValidUfs =
@@ -18,6 +19,11 @@ public sealed class MunicipalityService(
         "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI",
         "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"
     ];
+
+    private static readonly DistributedCacheEntryOptions CacheOptions = new()
+    {
+        AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24)
+    };
 
     public async Task<Result<PagedResultDto<MunicipalityDto>>> GetByStateAsync(
         string uf,
@@ -37,31 +43,20 @@ public sealed class MunicipalityService(
         if (pageSize < 1 || pageSize > 500)
             return Result<PagedResultDto<MunicipalityDto>>.Failure("O tamanho da página deve estar entre 1 e 500.");
 
-        var cacheKey = $"municipios:{normalizedUf}";
+        var municipalities = await GetFromCacheOrProviderAsync(normalizedUf, ct);
 
-        if (!cache.TryGetValue(cacheKey, out IEnumerable<Municipality>? municipalities))
-        {
-            logger.LogInformation("Cache miss para UF {Uf} usando provider {Provider}", normalizedUf, provider.ProviderName);
+        if (municipalities is null)
+            return Result<PagedResultDto<MunicipalityDto>>.Failure("Falha ao obter dados do provider.");
 
-            var result = await provider.GetByStateAsync(normalizedUf, ct);
+        if (municipalities.Count == 0 && !string.IsNullOrWhiteSpace(search) is false)
+            return Result<PagedResultDto<MunicipalityDto>>.Failure($"Nenhum município encontrado para a UF '{normalizedUf}'.");
 
-            if (result.IsFailure)
-                return Result<PagedResultDto<MunicipalityDto>>.Failure(result.Errors);
-
-            municipalities = result.Value!;
-
-            cache.Set(cacheKey, municipalities, TimeSpan.FromHours(24));
-            logger.LogInformation("{Count} municípios de {Uf} armazenados em cache por 24h", municipalities.Count(), normalizedUf);
-        }
-        else
-        {
-            logger.LogInformation("Cache hit para UF {Uf}", normalizedUf);
-        }
+        IEnumerable<Municipality> filtered = municipalities;
 
         if (!string.IsNullOrWhiteSpace(search))
-            municipalities = municipalities!.Where(m => m.Name.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase));
+            filtered = filtered.Where(m => m.Name.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase));
 
-        var dtos = municipalities!
+        var dtos = filtered
             .OrderBy(m => m.Name)
             .Select(m => new MunicipalityDto(m.Name, m.IbgeCode))
             .ToList();
@@ -72,5 +67,49 @@ public sealed class MunicipalityService(
 
         return Result<PagedResultDto<MunicipalityDto>>.Success(
             new PagedResultDto<MunicipalityDto>(paged, page, pageSize, total, totalPages));
+    }
+
+    private async Task<List<Municipality>?> GetFromCacheOrProviderAsync(string uf, CancellationToken ct)
+    {
+        var cacheKey = $"municipios:{uf}";
+
+        try
+        {
+            var cached = await cache.GetStringAsync(cacheKey, ct);
+
+            if (cached is not null)
+            {
+                logger.LogInformation("Cache hit para UF {Uf}", uf);
+                return JsonSerializer.Deserialize<List<Municipality>>(cached);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Redis indisponível — segue sem cache
+            logger.LogWarning(ex, "Cache indisponível para UF {Uf}. Consultando provider diretamente.", uf);
+        }
+
+        logger.LogInformation("Cache miss para UF {Uf} — consultando provider {Provider}", uf, provider.ProviderName);
+
+        var result = await provider.GetByStateAsync(uf, ct);
+
+        if (result.IsFailure)
+            return null;
+
+        var municipalities = result.Value!.ToList();
+
+        try
+        {
+            var serialized = JsonSerializer.Serialize(municipalities);
+            await cache.SetStringAsync(cacheKey, serialized, CacheOptions, ct);
+            logger.LogInformation("{Count} municípios de {Uf} armazenados em cache por 24h", municipalities.Count, uf);
+        }
+        catch (Exception ex)
+        {
+            // Falha ao gravar cache não deve quebrar a resposta
+            logger.LogWarning(ex, "Falha ao gravar cache para UF {Uf}", uf);
+        }
+
+        return municipalities;
     }
 }
